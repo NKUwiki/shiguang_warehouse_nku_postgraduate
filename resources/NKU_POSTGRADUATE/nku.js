@@ -161,13 +161,12 @@ function isSubsetOf(a, b) {
 /* ============================ 桥接层封装 ============================ */
 
 function showToast(message) {
-    console.log('JS: ' + message);
     try {
         if (window.shiguangBridge && typeof window.shiguangBridge.showToast === 'function') {
             window.shiguangBridge.showToast(message);
         }
-    } catch (error) {
-        console.warn('JS: showToast 调用失败', error);
+    } catch {
+        // 提示失败不值得打断导入流程
     }
 }
 
@@ -176,8 +175,8 @@ function notifyTaskCompletion() {
         if (window.shiguangBridge && typeof window.shiguangBridge.notifyTaskCompletion === 'function') {
             window.shiguangBridge.notifyTaskCompletion();
         }
-    } catch (error) {
-        console.warn('JS: notifyTaskCompletion 调用失败', error);
+    } catch {
+        // 结束信号交给宿主处理, 这里不做补偿
     }
 }
 
@@ -197,8 +196,8 @@ function applyWarningStyle() {
         style.id = NKU_WARNING_STYLE_ID;
         style.textContent = NKU_WARNING_CSS;
         (document.head || document.documentElement).appendChild(style);
-    } catch (error) {
-        console.warn('JS: 插入警告配色失败（不影响导入）。', error);
+    } catch {
+        // 配色是锦上添花, 失败不影响弹窗与导入
     }
 }
 
@@ -206,8 +205,8 @@ function removeWarningStyle() {
     try {
         const style = document.getElementById(NKU_WARNING_STYLE_ID);
         if (style && style.parentNode) style.parentNode.removeChild(style);
-    } catch (error) {
-        console.warn('JS: 移除警告配色失败（不影响导入）。', error);
+    } catch {
+        // 同上, 撤不掉也不影响导入
     }
 }
 
@@ -397,7 +396,6 @@ function parseTimetableDoc(doc) {
     const grid = buildTableGrid(table);
     const dayColumns = findDayColumns(grid);
     if (Object.keys(dayColumns).length === 0) {
-        console.warn('JS: 未能在表头中识别出星期列。');
         return null;
     }
 
@@ -550,7 +548,6 @@ async function confirmPendingCourses(pendingCourses) {
     if (!Array.isArray(pendingCourses) || pendingCourses.length === 0) return true;
 
     const list = formatPendingCourses(pendingCourses);
-    console.log(`JS: 以下 ${pendingCourses.length} 门课程时间地点待定, 无法导入课表:\n${list}`);
 
     if (!bridgeSupports('showAlert')) {
         // 没有弹窗能力时退回提示信息, 不阻塞导入流程
@@ -570,7 +567,6 @@ async function confirmPendingCourses(pendingCourses) {
         const confirmed = await window.shiguangBridgePromise.showAlert(title, content, '继续导入');
         return confirmed === true;
     } catch (error) {
-        console.warn('JS: 待定课程确认弹窗调用失败, 按继续导入处理。', error);
         return true;
     } finally {
         removeWarningStyle();
@@ -732,20 +728,16 @@ async function fetchPendingCourses(xn, xj) {
     try {
         const doc = await fetchWeekDoc(xn, xj, 1);
         fetched = parsePendingCourses(doc);
-    } catch (error) {
-        console.warn('JS: 抓取「时间地点待定」课程失败, 改用当前页面解析。', error);
+    } catch {
+        // 抓取失败就退回当前页面, 见下方
     }
 
     if (fetched && fetched.length > 0) {
-        console.log(`JS: 从系统抓取到 ${fetched.length} 门「时间地点待定」课程。`);
         return fetched;
     }
 
-    const onPage = parsePendingCourses(document);
-    if (onPage.length > 0) {
-        console.warn('JS: 目标学期的页面里没有「时间地点待定」表格, 回退用当前页面解析。');
-    }
-    return onPage;
+    // 抓不到就用当前页面的待定表（它跟随页面当前学期）
+    return parsePendingCourses(document);
 }
 
 /** 简单的并发池 */
@@ -784,7 +776,6 @@ async function crawlAllWeeks(xn, xj, maxWeek) {
             if (courses === null) {
                 if (looksLikeCourseDoc(doc)) {
                     // 页面是本系统的课表页, 只是没有课表表格 —— 多为超出本学期周次范围
-                    console.warn(`JS: 第 ${week} 周页面没有课表表格（可能超出本学期周次范围）, 按无课处理。`);
                     return { week, courses: [], error: null };
                 }
                 return { week, courses: null, error: '页面中找不到课表（登录状态可能已失效）' };
@@ -805,7 +796,6 @@ async function crawlAllWeeks(xn, xj, maxWeek) {
         if (!result) return;
         if (result.error || result.courses === null) {
             failedWeeks.push(result.week);
-            console.warn(`JS: 第 ${result.week} 周抓取失败: ${result.error}`);
             return;
         }
         okWeeks.push(result.week);
@@ -814,7 +804,6 @@ async function crawlAllWeeks(xn, xj, maxWeek) {
         });
     });
 
-    console.log(`JS: 周次抓取完成, 成功 ${okWeeks.length} 周, 失败 ${failedWeeks.length} 周, 共 ${courses.length} 条课程记录。`);
     return { courses, failedWeeks, okWeeks };
 }
 
@@ -879,10 +868,7 @@ function resolveWeeks(groups, totalWeeks) {
         && violatedCount * 2 >= parsedCount;
 
     if (shouldUseText) {
-        console.log(`JS: 检测到 ${violatedCount}/${parsedCount} 门课程的抓取周次与周次说明矛盾, `
-            + `判定该系统当前未按周次过滤课表, 改用周次说明推导。`);
     } else {
-        console.log('JS: 采用抓取到的周次（按周次过滤模式）。');
     }
 
     return stats.map(item => {
@@ -952,7 +938,6 @@ function sortCourses(courses) {
  * @returns {Promise<{xn: Array, xj: Array, zc: Array, curXn: string, curXj: string, curZc: string, doc: Document}>}
  */
 async function extractPageParams() {
-    console.log('JS: 正在从页面读取学年/学期/周次参数…');
 
     let doc = document;
     let xnEl = document.querySelector('#xn');
@@ -960,7 +945,6 @@ async function extractPageParams() {
     let zcEl = document.querySelector('#zc');
 
     if (!xnEl || !xjEl || !zcEl) {
-        console.log('JS: 当前页面缺少课表参数，尝试抓取课表页解析…');
         try {
             const response = await fetch(NKU_KB_PAGE, {
                 headers: { 'Accept': 'text/html,application/xhtml+xml' },
@@ -979,7 +963,6 @@ async function extractPageParams() {
                 zcEl = fetchedZc;
             }
         } catch (error) {
-            console.warn('JS: 抓取课表页失败', error);
         }
     }
 
@@ -987,16 +970,11 @@ async function extractPageParams() {
     const xj = readSelectOptions(xjEl);
     const zc = readSelectOptions(zcEl);
 
-    if (xn.length === 0 || xj.length === 0 || zc.length === 0) {
-        console.warn('JS: 未能读取到完整的学年/学期/周次选项。');
-    }
-
     const fallbackYear = String(new Date().getFullYear());
     const curXn = pickDefault(xn, xn.length - 1) || fallbackYear;
     const curXj = pickDefault(xj, 0) || '11';
     const curZc = pickDefault(zc, 0) || '1';
 
-    console.log(`JS: 页面参数 - 学年 ${curXn}, 学期 ${curXj}, 周次 ${curZc}, 共 ${zc.length} 个周次选项。`);
     return { xn, xj, zc, curXn, curXj, curZc, doc };
 }
 
@@ -1046,7 +1024,6 @@ async function selectAcademicYearAndSemester(params) {
     if (!options) return { xn: params.curXn, xj: params.curXj, label: '当前学期' };
 
     if (!bridgeSupports('showSingleSelection')) {
-        console.warn('JS: 当前环境不支持选择弹窗, 使用页面当前学期。');
         return options.values[options.defaultIndex];
     }
 
@@ -1115,31 +1092,26 @@ async function selectSemesterStartDate(xn, xj) {
 /* ============================ 保存 ============================ */
 
 async function saveCourses(courses) {
-    console.log(`JS: 正在保存 ${courses.length} 门课程…`);
     showToast(`正在保存 ${courses.length} 门课程…`);
     try {
         await window.shiguangBridgePromise.saveImportedCourses(JSON.stringify(courses, null, 2));
         return true;
     } catch (error) {
         showToast(`课程保存失败: ${error.message}`);
-        console.error('JS: saveCourses Error', error);
         return false;
     }
 }
 
 async function importPresetTimeSlots(timeSlots) {
     if (!Array.isArray(timeSlots) || timeSlots.length === 0) {
-        console.log('JS: 没有可导入的作息时间, 跳过。');
         return true;
     }
-    console.log(`JS: 正在导入 ${timeSlots.length} 个作息时间段…`);
     showToast('正在导入作息时间…');
     try {
         await window.shiguangBridgePromise.savePresetTimeSlots(JSON.stringify(timeSlots));
         return true;
     } catch (error) {
         showToast('导入作息时间失败: ' + error.message);
-        console.error('JS: importPresetTimeSlots Error', error);
         return false;
     }
 }
@@ -1147,11 +1119,9 @@ async function importPresetTimeSlots(timeSlots) {
 async function saveCourseConfig(config) {
     try {
         await window.shiguangBridgePromise.saveCourseConfig(JSON.stringify(config));
-        console.log('JS: 课表配置保存成功。', config);
         return true;
     } catch (error) {
         showToast('保存课表配置失败: ' + error.message);
-        console.error('JS: saveCourseConfig Error', error);
         return false;
     }
 }
@@ -1193,14 +1163,11 @@ async function promptUserToStart(params) {
         );
         return confirmed === true;
     } catch (error) {
-        console.warn('JS: 显示开始提示失败, 直接继续。', error);
         return true;
     }
 }
 
-async function runImportFlow() {
-    console.log('JS: 开始执行南开大学研究生课表导入流程…');
-
+async function importFlow() {
     if (isLoginPage()) {
         showToast('导入失败：请先登录南开大学研究生教育综合管理系统！');
         return;
@@ -1231,12 +1198,9 @@ async function runImportFlow() {
     }
     const { xn, xj, label } = term;
     const totalWeeks = params.zc.length;
-    console.log(`JS: 目标学期 ${label}（xn=${xn}, xj=${xj}）, 周次上限 ${totalWeeks}。`);
 
     // 3. 作息时间（从当前页面解析）
     const timeSlots = parseTimeSlotsFromDoc(document) || NKU_FALLBACK_TIME_SLOTS;
-    const timeSlotsFromPage = parseTimeSlotsFromDoc(document) !== null;
-    console.log(`JS: 解析到 ${timeSlots.length} 个作息时间段（来源: ${timeSlotsFromPage ? '页面' : '内置兜底'}）。`);
 
     // 4. 「时间地点待定」课程 —— 单独弹窗让用户确认（放在耗时的逐周抓取之前, 取消就不用等了）
     const pendingCourses = await fetchPendingCourses(xn, xj);
@@ -1271,7 +1235,6 @@ async function runImportFlow() {
         weeks: course.weeks
     }));
 
-    console.log(`JS: 解析完成, 共 ${courses.length} 门课程：`, courses);
 
     // 6. 保存课程
     const saved = await saveCourses(courses);
@@ -1304,51 +1267,26 @@ async function runImportFlow() {
 
     showToast(message);
     notifyTaskCompletion();
-    console.log('JS: 南开大学研究生课表导入流程完成。');
 }
 
-/* ============================ 对外暴露（便于测试与调试） ============================ */
+/* ============================ 入口 ============================ */
 
-window.NKUAdapter = {
-    NKU_KB_PAGE,
-    NKU_FALLBACK_TIME_SLOTS,
-    NKU_WARNING_STYLE_ID,
-    NKU_WARNING_CSS,
-    applyWarningStyle,
-    removeWarningStyle,
-    cnToInt,
-    formatTime,
-    timeToMinutes,
-    buildTableGrid,
-    findDayColumns,
-    findTimetable,
-    looksLikeCourseDoc,
-    anchorToLines,
-    parseCourseAnchor,
-    parseTimetableDoc,
-    parseTimeSlotsFromDoc,
-    parsePendingCourses,
-    formatPendingCourses,
-    confirmPendingCourses,
-    fetchPendingCourses,
-    parseWeekDescToWeeks,
-    readSelectOptions,
-    buildTermOptions,
-    guessTermStartDate,
-    deriveDurations,
-    groupCoursesBySignature,
-    resolveWeeks,
-    mergeAdjacentSections,
-    sortCourses,
-    crawlAllWeeks,
-    fetchWeekDoc,
-    runImportFlow
-};
+// 防重入: 用户连点两次导入、或脚本被重复注入时, 只让第一遍跑到底。
+// 这是运行期的并发守卫, 不是可配置的开关。
+const NKU_RUNNING_FLAG = '__NKU_IMPORT_RUNNING__';
 
-// 测试插件（shiguang_Tester）与正式应用都希望脚本被注入后自动执行；
-// 自动化测试时通过 window.__NKU_ADAPTER_NO_AUTO_RUN__ 关闭。
-if (!window.__NKU_ADAPTER_NO_AUTO_RUN__) {
-    runImportFlow();
+async function runImportFlow() {
+    if (window[NKU_RUNNING_FLAG]) return;
+    window[NKU_RUNNING_FLAG] = true;
+    try {
+        await importFlow();
+    } finally {
+        window[NKU_RUNNING_FLAG] = false;
+    }
 }
+
+// 宿主（应用 / 测试插件）在用户点击「开始导入」后注入并执行本脚本, 因此顶层直接启动流程。
+// 流程的第一步就是向用户确认, 用户确认后才开始读取参数与抓取页面。
+runImportFlow();
 
 })();
