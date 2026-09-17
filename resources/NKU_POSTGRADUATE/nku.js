@@ -1,5 +1,5 @@
 // 南开大学（研究生）教育综合管理系统 拾光课程表适配脚本
-// 适用系统: https://yjs.nankai.edu.cn/   —— 培养 → 我的课表 (py/page/student/grkcb.htm)
+// 适用系统: https://yjs.nankai.edu.cn/   —— 培养 → 个人课表 (py/page/student/grkcb.htm)
 //
 // 系统特点（决定了本脚本的实现方式）:
 //   1. 服务端渲染(JSP)页面, 课表以 HTML 表格输出, 没有可用的 JSON 接口;
@@ -9,8 +9,9 @@
 //      这比解析中文周次说明更准确。脚本同时保留中文说明的解析作为兜底与自检:
 //      若某些课程出现的周次明显超出其说明文字(说明本系统当前并未分周渲染),
 //      则自动改用说明文字推导周次, 保证两种情况都能正确导入。
-//   4. 「以下课程时间地点待定」表格里的课程没有具体星期/节次, 无法导入课表,
-//      脚本会跳过并在结束时提示, 请自行在应用内手动添加。
+//   4. 「以下课程时间地点待定」表格里的课程没有具体星期/节次, 无法导入课表。
+//      脚本会在开始抓取前单独弹一个确认框, 把这些课程逐条列出来,
+//      用户确认后才继续导入（取消则整个导入中止）。
 //
 // 维护者: Cure   |   出现问题请提 issues 或提交 PR
 
@@ -423,9 +424,9 @@ function parseTimeSlotsFromDoc(doc) {
 
 /**
  * 解析「以下课程时间地点待定」表格。
- * 这些课程没有星期/节次信息, 无法写进课表, 只能提示用户。
+ * 这些课程没有星期/节次信息, 无法写进课表, 只能交给用户手动添加。
  * @param {Document} doc
- * @returns {Array<Object>}
+ * @returns {Array<{code: string, name: string, teacher: string, time: string, position: string, remark: string}>}
  */
 function parsePendingCourses(doc) {
     const result = [];
@@ -443,10 +444,12 @@ function parsePendingCourses(doc) {
                 .map(cell => normalizeText(cell.textContent));
 
         const indexOf = keyword => headers.findIndex(header => header.indexOf(keyword) !== -1);
+        const codeIdx = indexOf('课程编号');
         const nameIdx = indexOf('课程名称');
         const teacherIdx = indexOf('任课教师');
         const timeIdx = indexOf('上课时间');
         const positionIdx = indexOf('上课地点');
+        const remarkIdx = indexOf('备注');
 
         Array.from(table.querySelectorAll('tbody tr')).forEach(tr => {
             const cells = Array.from(tr.querySelectorAll('td'));
@@ -455,15 +458,78 @@ function parsePendingCourses(doc) {
             const name = value(nameIdx);
             if (!name) return;
             result.push({
+                code: value(codeIdx),
                 name,
                 teacher: value(teacherIdx),
                 time: value(timeIdx),
-                position: value(positionIdx)
+                position: value(positionIdx),
+                remark: value(remarkIdx)
             });
         });
     });
 
     return result;
+}
+
+/**
+ * 把「时间地点待定」课程整理成弹窗里展示的多行文本, 每门课一行:
+ *   1. 实验室安全教育（吴强 · 时间待定 · 场地详见学院通知）
+ * 课程太多时只列前 limit 门, 其余折叠成一行汇总, 避免弹窗被撑爆。
+ * @param {Array<Object>} pendingCourses
+ * @param {number} [limit=8]
+ * @returns {string}
+ */
+function formatPendingCourses(pendingCourses, limit) {
+    const max = typeof limit === 'number' && limit > 0 ? limit : 8;
+    const lines = pendingCourses.slice(0, max).map((course, index) => {
+        const details = [course.teacher, course.time, course.position, course.remark]
+            .map(item => normalizeText(item))
+            .filter(Boolean);
+        return `${index + 1}. ${course.name}${details.length > 0 ? `（${details.join(' · ')}）` : ''}`;
+    });
+    if (pendingCourses.length > max) {
+        lines.push(`… 等共 ${pendingCourses.length} 门`);
+    }
+    return lines.join('\n');
+}
+
+/**
+ * 「时间地点待定」课程的确认弹窗。
+ *
+ * 这些课程在系统里只有「时间待定」四个字, 没有星期与节次, 排不进课表,
+ * 只能由用户在应用里手动添加。所以这里单独弹一个需要用户确认的对话框
+ * 把课程逐条列清楚, 而不是只在收尾提示里塞一行文字:
+ *   - 用户确认（或环境不支持弹窗）→ 继续导入其余课程;
+ *   - 用户取消 → 整个导入中止, 不写入任何数据。
+ *
+ * @param {Array<Object>} pendingCourses
+ * @returns {Promise<boolean>} 是否继续导入
+ */
+async function confirmPendingCourses(pendingCourses) {
+    if (!Array.isArray(pendingCourses) || pendingCourses.length === 0) return true;
+
+    const list = formatPendingCourses(pendingCourses);
+    console.log(`JS: 以下 ${pendingCourses.length} 门课程时间地点待定, 无法导入课表:\n${list}`);
+
+    if (!bridgeSupports('showAlert')) {
+        // 没有弹窗能力时退回提示信息, 不阻塞导入流程
+        showToast(`另有 ${pendingCourses.length} 门「时间地点待定」课程无法导入课表, 请手动添加。`);
+        return true;
+    }
+
+    const title = `有 ${pendingCourses.length} 门课程时间地点待定`;
+    const content = '以下课程在系统中没有具体的上课时间与地点, 无法写入课表, '
+        + '需要你在导入完成后手动添加：\n\n'
+        + `${list}\n\n`
+        + '以上课程不影响其余课程的导入。';
+
+    try {
+        const confirmed = await window.shiguangBridgePromise.showAlert(title, content, '继续导入');
+        return confirmed === true;
+    } catch (error) {
+        console.warn('JS: 待定课程确认弹窗调用失败, 按继续导入处理。', error);
+        return true;
+    }
 }
 
 /* ============================ 周次推导 ============================ */
@@ -603,6 +669,38 @@ async function fetchWeekDoc(xn, xj, zc) {
 
     const html = await response.text();
     return new DOMParser().parseFromString(html, 'text/html');
+}
+
+/**
+ * 读取「时间地点待定」课程。
+ *
+ * 页面上的待定表格跟随页面当前选中的学年学期, 如果用户选了别的学期就不准了,
+ * 所以这里按用户选定的学年学期重新抓一次课表页（第 1 周即可）;
+ * 抓取失败时退回当前页面, 至少不会比原来更差。
+ *
+ * @param {string} xn
+ * @param {string} xj
+ * @returns {Promise<Array<Object>>}
+ */
+async function fetchPendingCourses(xn, xj) {
+    let fetched = null;
+    try {
+        const doc = await fetchWeekDoc(xn, xj, 1);
+        fetched = parsePendingCourses(doc);
+    } catch (error) {
+        console.warn('JS: 抓取「时间地点待定」课程失败, 改用当前页面解析。', error);
+    }
+
+    if (fetched && fetched.length > 0) {
+        console.log(`JS: 从系统抓取到 ${fetched.length} 门「时间地点待定」课程。`);
+        return fetched;
+    }
+
+    const onPage = parsePendingCourses(document);
+    if (onPage.length > 0) {
+        console.warn('JS: 目标学期的页面里没有「时间地点待定」表格, 回退用当前页面解析。');
+    }
+    return onPage;
 }
 
 /** 简单的并发池 */
@@ -1090,17 +1188,20 @@ async function runImportFlow() {
     const totalWeeks = params.zc.length;
     console.log(`JS: 目标学期 ${label}（xn=${xn}, xj=${xj}）, 周次上限 ${totalWeeks}。`);
 
-    // 3. 作息时间与待定课程（从当前页面解析）
+    // 3. 作息时间（从当前页面解析）
     const timeSlots = parseTimeSlotsFromDoc(document) || NKU_FALLBACK_TIME_SLOTS;
     const timeSlotsFromPage = parseTimeSlotsFromDoc(document) !== null;
     console.log(`JS: 解析到 ${timeSlots.length} 个作息时间段（来源: ${timeSlotsFromPage ? '页面' : '内置兜底'}）。`);
 
-    const pendingCourses = parsePendingCourses(document);
-    if (pendingCourses.length > 0) {
-        console.log('JS: 时间地点待定的课程:', pendingCourses);
+    // 4. 「时间地点待定」课程 —— 单独弹窗让用户确认（放在耗时的逐周抓取之前, 取消就不用等了）
+    const pendingCourses = await fetchPendingCourses(xn, xj);
+    const pendingConfirmed = await confirmPendingCourses(pendingCourses);
+    if (!pendingConfirmed) {
+        showToast('已取消导入（「时间地点待定」课程未确认）。');
+        return;
     }
 
-    // 4. 逐周抓取并归并
+    // 5. 逐周抓取并归并
     const crawl = await crawlAllWeeks(xn, xj, totalWeeks);
     if (crawl.okWeeks.length === 0) {
         showToast('课表抓取失败：所有周次都未取到数据，请确认登录状态后重试。');
@@ -1127,14 +1228,14 @@ async function runImportFlow() {
 
     console.log(`JS: 解析完成, 共 ${courses.length} 门课程：`, courses);
 
-    // 5. 保存课程
+    // 6. 保存课程
     const saved = await saveCourses(courses);
     if (!saved) return;
 
-    // 6. 导入作息时间
+    // 7. 导入作息时间
     await importPresetTimeSlots(timeSlots);
 
-    // 7. 确认并保存开学日期
+    // 8. 确认并保存开学日期
     const startDate = await selectSemesterStartDate(xn, xj);
     const durations = deriveDurations(timeSlots);
     await saveCourseConfig({
@@ -1145,15 +1246,15 @@ async function runImportFlow() {
         firstDayOfWeek: 1
     });
 
-    // 8. 收尾提示
+    // 9. 收尾提示
     let message = `导入成功！共导入 ${courses.length} 门课程。`;
     if (startDate) message += `\n开学日期：${startDate}`;
     if (crawl.failedWeeks.length > 0) {
         message += `\n注意：第 ${crawl.failedWeeks.join('、')} 周抓取失败, 这些周的课程可能缺失。`;
     }
     if (pendingCourses.length > 0) {
-        const names = pendingCourses.map(c => c.name).join('、');
-        message += `\n另有 ${pendingCourses.length} 门「时间地点待定」课程无法导入课表：${names}，请手动添加。`;
+        // 课程清单已经在导入前的弹窗里逐条列过了, 这里只留一句简短的提醒
+        message += `\n另有 ${pendingCourses.length} 门「时间地点待定」课程未导入课表, 请手动添加。`;
     }
 
     showToast(message);
@@ -1178,6 +1279,9 @@ window.NKUAdapter = {
     parseTimetableDoc,
     parseTimeSlotsFromDoc,
     parsePendingCourses,
+    formatPendingCourses,
+    confirmPendingCourses,
+    fetchPendingCourses,
     parseWeekDescToWeeks,
     readSelectOptions,
     buildTermOptions,
