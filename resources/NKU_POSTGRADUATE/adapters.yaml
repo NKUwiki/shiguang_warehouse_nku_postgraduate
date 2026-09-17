@@ -1,5 +1,5 @@
 adapters:
-  - adapter_id: "NKU"
+  - adapter_id: "NKU_POSTGRADUATE"
     adapter_name: "南开大学研究生教育综合管理系统"
     category: "POSTGRADUATE"
     asset_js_path: "nku.js"
