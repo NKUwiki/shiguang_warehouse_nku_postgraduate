@@ -1,8 +1,0 @@
-adapters:
-  - adapter_id: "NKU_POSTGRADUATE"
-    adapter_name: "南开大学研究生教育综合管理系统"
-    category: "POSTGRADUATE"
-    asset_js_path: "nku.js"
-    import_url: "https://yjs.nankai.edu.cn/py/page/student/grkcb.htm"
-    maintainer: "Cure"
-    description: "南开大学研究生院(yjs.nankai.edu.cn)适配, 登录后需进入'培养-我的课表'再点击导入。系统为服务端渲染页面, 脚本会逐周抓取课表以还原每门课的真实周次, 并自动读取作息时间; 开学日期系统未提供, 由脚本推算后请用户确认; '时间地点待定'的课程无法排入课表, 会提示手动添加。"
