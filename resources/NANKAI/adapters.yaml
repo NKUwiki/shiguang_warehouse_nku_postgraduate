@@ -3,7 +3,7 @@ adapters:
   - adapter_id: "NANKAI"
     adapter_name: "南开大学研究生教育综合管理系统"
     category: "POSTGRADUATE"
-    asset_js_path: "nku.js"
+    asset_js_path: "nankai.js"
     import_url: "https://yjs.nankai.edu.cn/allogene/page/home.htm"
     maintainer: "Cure"
     description: "南开大学研究生院(yjs.nankai.edu.cn)适配, 登录后需进入'培养-我的课表'再点击导入。系统为服务端渲染页面, 脚本会逐周抓取课表以还原每门课的真实周次, 并自动读取作息时间; 开学日期系统未提供, 由脚本推算后请用户确认; '时间地点待定'的课程没有星期/节次, 导入前会单独弹红色警告样式的确认框(⚠️ + 逐条列出课程)请用户确认(取消则中止导入), 确认后需在应用内手动添加。"
