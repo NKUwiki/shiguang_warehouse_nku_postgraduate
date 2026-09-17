@@ -10,8 +10,10 @@
 //      若某些课程出现的周次明显超出其说明文字(说明本系统当前并未分周渲染),
 //      则自动改用说明文字推导周次, 保证两种情况都能正确导入。
 //   4. 「以下课程时间地点待定」表格里的课程没有具体星期/节次, 无法导入课表。
-//      脚本会在开始抓取前单独弹一个确认框, 把这些课程逐条列出来,
+//      脚本会在开始抓取前单独弹一个红色警告样式的确认框（⚠️ + 逐条课程清单）,
 //      用户确认后才继续导入（取消则整个导入中止）。
+//      注: 桥接层的弹窗没有颜色参数, 红色样式是靠在弹窗显示期间覆盖插件的 CSS 实现的,
+//      应用端若用原生弹窗则样式不生效, 但弹窗本身与 ⚠️ 文案照常显示。
 //
 // 维护者: Cure   |   出现问题请提 issues 或提交 PR
 
@@ -59,6 +61,20 @@ const NKU_FALLBACK_TIME_SLOTS = [
     { number: 13, startTime: '20:20', endTime: '21:05' },
     { number: 14, startTime: '21:15', endTime: '22:00' }
 ];
+
+/* ---- 「时间地点待定」警告弹窗的配色 ----
+ * 桥接层的 showAlert 只接受 (标题, 正文, 按钮文字), 没有颜色参数, 所以只能在我们
+ * 自己的对话框显示期间往页面里插一段样式来覆盖它。选择器沿用插件内联对话框的 id
+ * （#bridge-dialog-overlay / #bridge-dialog-container）, 用 !important 压过它的内联样式。
+ * 如果应用端用的是原生弹窗（DOM 里找不到这些节点）, 这段样式不会生效 —— 属于尽力而为,
+ * 失败没有任何副作用, 弹窗本身照常显示。
+ */
+const NKU_WARNING_STYLE_ID = 'nku-pending-warning-style';
+const NKU_WARNING_CSS = [
+    '#bridge-dialog-container { border: 2px solid #d93025 !important; }',
+    '#bridge-dialog-container h3 { color: #d93025 !important; }',
+    '#bridge-dialog-container button { background-color: #d93025 !important; }'
+].join('\n');
 
 /* ============================ 通用工具 ============================ */
 
@@ -171,6 +187,28 @@ function notifyTaskCompletion() {
  */
 function bridgeSupports(method) {
     return !!(window.shiguangBridgePromise && typeof window.shiguangBridgePromise[method] === 'function');
+}
+
+/** 红色警告配色: 只在我们的弹窗显示期间生效, 用完立刻撤掉, 避免影响其它弹窗 */
+function applyWarningStyle() {
+    try {
+        if (document.getElementById(NKU_WARNING_STYLE_ID)) return;
+        const style = document.createElement('style');
+        style.id = NKU_WARNING_STYLE_ID;
+        style.textContent = NKU_WARNING_CSS;
+        (document.head || document.documentElement).appendChild(style);
+    } catch (error) {
+        console.warn('JS: 插入警告配色失败（不影响导入）。', error);
+    }
+}
+
+function removeWarningStyle() {
+    try {
+        const style = document.getElementById(NKU_WARNING_STYLE_ID);
+        if (style && style.parentNode) style.parentNode.removeChild(style);
+    } catch (error) {
+        console.warn('JS: 移除警告配色失败（不影响导入）。', error);
+    }
 }
 
 /* ============================ 页面结构解析 ============================ */
@@ -502,6 +540,9 @@ function formatPendingCourses(pendingCourses, limit) {
  *   - 用户确认（或环境不支持弹窗）→ 继续导入其余课程;
  *   - 用户取消 → 整个导入中止, 不写入任何数据。
  *
+ * 视觉上用警告样式提醒用户注意: 文案前缀 ⚠️ / ✅, 并在弹窗显示期间套一层红色配色
+ * （见 applyWarningStyle —— 桥接层不提供颜色参数, 只能覆盖插件自身的 CSS）。
+ *
  * @param {Array<Object>} pendingCourses
  * @returns {Promise<boolean>} 是否继续导入
  */
@@ -513,22 +554,26 @@ async function confirmPendingCourses(pendingCourses) {
 
     if (!bridgeSupports('showAlert')) {
         // 没有弹窗能力时退回提示信息, 不阻塞导入流程
-        showToast(`另有 ${pendingCourses.length} 门「时间地点待定」课程无法导入课表, 请手动添加。`);
+        showToast(`⚠️ 另有 ${pendingCourses.length} 门「时间地点待定」课程无法导入课表, 请手动添加。`);
         return true;
     }
 
-    const title = `有 ${pendingCourses.length} 门课程时间地点待定`;
-    const content = '以下课程在系统中没有具体的上课时间与地点, 无法写入课表, '
-        + '需要你在导入完成后手动添加：\n\n'
+    const title = `⚠️ 有 ${pendingCourses.length} 门课程时间地点待定`;
+    const content = `⚠️ 以下 ${pendingCourses.length} 门课程在系统中没有具体的上课时间与地点, `
+        + '无法写入课表, 需要你在导入完成后手动添加：\n\n'
         + `${list}\n\n`
-        + '以上课程不影响其余课程的导入。';
+        + '✅ 以上课程不影响其余课程的导入。';
 
+    // 显示期间套一层红色警告配色（尽力而为, 失败不影响弹窗）
+    applyWarningStyle();
     try {
         const confirmed = await window.shiguangBridgePromise.showAlert(title, content, '继续导入');
         return confirmed === true;
     } catch (error) {
         console.warn('JS: 待定课程确认弹窗调用失败, 按继续导入处理。', error);
         return true;
+    } finally {
+        removeWarningStyle();
     }
 }
 
@@ -1254,7 +1299,7 @@ async function runImportFlow() {
     }
     if (pendingCourses.length > 0) {
         // 课程清单已经在导入前的弹窗里逐条列过了, 这里只留一句简短的提醒
-        message += `\n另有 ${pendingCourses.length} 门「时间地点待定」课程未导入课表, 请手动添加。`;
+        message += `\n⚠️ 另有 ${pendingCourses.length} 门「时间地点待定」课程未导入课表, 请手动添加。`;
     }
 
     showToast(message);
@@ -1267,6 +1312,10 @@ async function runImportFlow() {
 window.NKUAdapter = {
     NKU_KB_PAGE,
     NKU_FALLBACK_TIME_SLOTS,
+    NKU_WARNING_STYLE_ID,
+    NKU_WARNING_CSS,
+    applyWarningStyle,
+    removeWarningStyle,
     cnToInt,
     formatTime,
     timeToMinutes,
