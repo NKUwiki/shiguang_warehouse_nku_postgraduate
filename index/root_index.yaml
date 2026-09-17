@@ -1072,3 +1072,8 @@ schools:
     name: "江苏电子信息职业学院"
     initial: "J"
     resource_folder: "JSEI"
+
+  - id: "NKU_POSTGRADUATE‎"
+    name: "南开大学-研究生"
+    initial: "N"
+    resource_folder: "NKU_POSTGRADUATE‎"
