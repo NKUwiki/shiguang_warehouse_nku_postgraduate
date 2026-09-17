@@ -1,4 +1,3 @@
-# resources/NKU_POSTGRADUATE/adapters.yaml
 adapters:
   - adapter_id: "NKU"
     adapter_name: "南开大学研究生教育综合管理系统"
